@@ -9,12 +9,10 @@ PICO_SDK_PATH = ../pico-sdk
 
 
 FAMILY := rp2040
-#FAMILY_PATH = hw/bsp/$(FAMILY)
 BOARD := pico_sdk
 
 # Build directory
-#BUILD := _build/$(BOARD)
-BUILD := __build
+BUILD := _build
 
 PROJECT := $(notdir $(CURDIR))
 
