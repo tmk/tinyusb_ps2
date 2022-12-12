@@ -29,4 +29,12 @@ target_include_directories(${PROJECT} PUBLIC
 family_configure_device_example(${PROJECT})
 
 # Enable stdio_usb for printf on CDC
-#pico_enable_stdio_usb(${PROJECT} 1)
+pico_enable_stdio_usb(${PROJECT} 1)
+
+
+# pico-sdk/src/rp2_common/hardware_flash/flash.c
+#   error: declaration of 'flash_range_erase' shadows a global declaration
+target_compile_options(${PROJECT} PUBLIC
+        #-Wno-error=shadow
+        -Wno-shadow
+        )
