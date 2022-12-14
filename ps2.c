@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+//#include "pico/critical_section.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
 #include "hardware/irq.h"
@@ -89,6 +90,9 @@ void gpio_callback(uint gpio, uint32_t events) {
             // stop bit is high
             if (!gpio_get(DATA_PIN))
                 goto ERROR;
+            // critical section for ringbuffer - need to do nothing here
+            // because this should be called in IRQ context.
+            // Use protection in main thread when using ringuf.
             ringbuf_put(&rbuf, data);
             goto DONE;
             break;
@@ -319,6 +323,8 @@ int main() {
     tud_init(BOARD_TUD_RHPORT);
     stdio_init_all();
 
+    //critical_section_t crit_rbuf;
+    //critical_section_init(&crit_rbuf);
 
     // input pins: clock(IRQ at falling edge)
     gpio_init(CLOCK_PIN);
@@ -328,13 +334,14 @@ int main() {
 
     printf("\ntinyusb_ps2\n");
     while (true) {
-        //__wfi();
-        //__wfe();
-        //printf(".");
+        //irq_set_enabled(IO_IRQ_BANK0, false);             // disable only GPIO IRQ
+        //critical_section_enter_blocking(&crit_rbuf);      // disable IRQ and spin_lock
+        uint32_t status = save_and_disable_interrupts();    // disable IRQ
+        int c = ringbuf_get(&rbuf); // critical_section
+        restore_interrupts(status);
+        //critical_section_exit(&crit_rbuf);
+        //irq_set_enabled(IO_IRQ_BANK0, true);
 
-        irq_set_enabled(IO_IRQ_BANK0, false);
-        int c =  ringbuf_get(&rbuf);
-        irq_set_enabled(IO_IRQ_BANK0, true);
         if (c != -1) {
             printf("%02X ", c);
             process_cs2((uint8_t) c);
