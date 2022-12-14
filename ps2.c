@@ -331,14 +331,14 @@ int main() {
         //__wfi();
         //__wfe();
         //printf(".");
+
         irq_set_enabled(IO_IRQ_BANK0, false);
-        if (!ringbuf_is_empty(&rbuf)) {
-            int c =  ringbuf_get(&rbuf);
+        int c =  ringbuf_get(&rbuf);
+        irq_set_enabled(IO_IRQ_BANK0, true);
+        if (c != -1) {
             printf("%02X ", c);
-            //printf("%02X->%04X ", c, cs2_to_hid[c]);
             process_cs2((uint8_t) c);
         }
-        irq_set_enabled(IO_IRQ_BANK0, true);
 
         tud_task();
         hid_task();
