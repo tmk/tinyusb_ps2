@@ -109,7 +109,7 @@ DONE:
 }
 
 // Code Set 2 -> HID(Usage page << 12 | Usage ID)
-// https://github.com/tmk/tmk_keyboard/wiki/IBM-PC-AT-Keyboard-Protocol#translation-to-hid-usages-of-microsoft
+// https://github.com/tmk/tmk_keyboard/wiki/IBM-PC-AT-Keyboard-Protocol#code-set-2-to-hid-usage
 const uint16_t cs2_to_hid[] = {
     //   0       1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
     0x0000, 0x0042, 0x0000, 0x003E, 0x003C, 0x003A, 0x003B, 0x0045, 0x0068, 0x0043, 0x0041, 0x003F, 0x003D, 0x002B, 0x0035, 0x0067, // 0
