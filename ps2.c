@@ -465,8 +465,13 @@ void make_code(uint16_t code)
                 tud_hid_report(REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
             }
             break;
-        case 0x1: // system
         case 0xC: // consumer
+            {
+                uint16_t usage = code & 0xFFF;
+                tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+            }
+            break;
+        case 0x1: // system
         default:
             break;
     }
@@ -490,8 +495,13 @@ void break_code(uint16_t code)
                 tud_hid_report(REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
             }
             break;
-        case 0x1: // System
         case 0xC: // Consumer
+            {
+                uint16_t usage = 0;
+                tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+            }
+            break;
+        case 0x1: // System
         default:
             break;
     }
