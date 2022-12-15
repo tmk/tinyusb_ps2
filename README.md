@@ -21,7 +21,7 @@ This array defines mapping Code Set 2 to HID usage.
 
 Its content is uint16_t value comprised of (Usage page << 12 | Usage ID) where:
 
-    Usage page: 4-bit       0x7(keyboard), 0x1(system), 0xC(consumer)
+    Usage page: 4-bit       0x0(Keyboard by default), 0x7(Keyboard), 0xC(Consumer), 0x1(Generic Desktiop/System Control)
     Usage ID:   12-bit
 
 

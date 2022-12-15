@@ -109,6 +109,7 @@ DONE:
 }
 
 // Code Set 2 -> HID(Usage page << 12 | Usage ID)
+// Usage page: 0x0(Keyboard by default), 0x7(Keyboard), 0xC(Consumer), 0x1(Generic Desktiop/System Control)
 // https://github.com/tmk/tmk_keyboard/wiki/IBM-PC-AT-Keyboard-Protocol#code-set-2-to-hid-usage
 const uint16_t cs2_to_hid[] = {
     //   0       1       2       3       4       5       6       7       8       9       A       B       C       D       E       F
@@ -130,25 +131,24 @@ const uint16_t cs2_to_hid[] = {
     0x0049, 0x004C, 0x0051, 0x0000, 0x004F, 0x0052, 0x0000, 0x0048, 0x0000, 0x0000, 0x004E, 0x0000, 0x0046, 0x004B, 0x0048, 0x0000, // F
 };
 
-enum CS2_state {
-    CS2_INIT,
-    CS2_F0,
-    CS2_E0,
-    CS2_E0_F0,
-    // Pause
-    CS2_E1,
-    CS2_E1_14,
-    CS2_E1_F0,
-    CS2_E1_F0_14,
-    CS2_E1_F0_14_F0,
-} state_cs2 = CS2_INIT;
-
-void make_code(uint16_t code);
-void break_code(uint16_t code);
+void register_code(uint16_t code, bool make);
 
 // from TMK ibmpc_usb converter
 int8_t process_cs2(uint8_t code)
 {
+    static enum {
+        CS2_INIT,
+        CS2_F0,
+        CS2_E0,
+        CS2_E0_F0,
+        // Pause
+        CS2_E1,
+        CS2_E1_14,
+        CS2_E1_F0,
+        CS2_E1_F0_14,
+        CS2_E1_F0_14_F0,
+    } state_cs2 = CS2_INIT;
+
     switch (state_cs2) {
         case CS2_INIT:
             switch (code) {
@@ -164,7 +164,7 @@ int8_t process_cs2(uint8_t code)
                 case 0x00 ... 0x7F:
                 case 0x83:  // F7
                 case 0x84:  // Alt'd PrintScreen
-                    make_code(cs2_to_hid[code]);
+                    register_code(cs2_to_hid[code], true);
                     break;
                 case 0xAA:  // Self-test passed
                 case 0xFC:  // Self-test failed
@@ -188,7 +188,7 @@ int8_t process_cs2(uint8_t code)
                 default:
                     state_cs2 = CS2_INIT;
                     if (code < 0x80) {
-                        make_code(cs2_to_hid[code | 0x80]);
+                        register_code(cs2_to_hid[code | 0x80], true);
                     } else {
                         xprintf("!CS2_E0!\n");
                         return -1;
@@ -201,7 +201,7 @@ int8_t process_cs2(uint8_t code)
                 case 0x83:  // F7
                 case 0x84:  // Alt'd PrintScreen
                     state_cs2 = CS2_INIT;
-                    break_code(cs2_to_hid[code]);
+                    register_code(cs2_to_hid[code], false);
                     break;
                 default:
                     state_cs2 = CS2_INIT;
@@ -218,7 +218,7 @@ int8_t process_cs2(uint8_t code)
                 default:
                     state_cs2 = CS2_INIT;
                     if (code < 0x80) {
-                        break_code(cs2_to_hid[code | 0x80]);
+                        register_code(cs2_to_hid[code | 0x80], false);
                     } else {
                         xprintf("!CS2_E0_F0!\n");
                         return -1;
@@ -241,7 +241,7 @@ int8_t process_cs2(uint8_t code)
         case CS2_E1_14:
             switch (code) {
                 case 0x77:
-                    make_code(cs2_to_hid[code | 0x80]);
+                    register_code(cs2_to_hid[code | 0x80], true);
                     state_cs2 = CS2_INIT;
                     break;
                 default:
@@ -270,7 +270,7 @@ int8_t process_cs2(uint8_t code)
         case CS2_E1_F0_14_F0:
             switch (code) {
                 case 0x77:
-                    break_code(cs2_to_hid[code | 0x80]);
+                    register_code(cs2_to_hid[code | 0x80], false);
                     state_cs2 = CS2_INIT;
                     break;
                 default:
@@ -400,18 +400,13 @@ void led_blinking_task(void)
 //--------------------------------------------------------------------+
 static hid_keyboard_report_t keyboard_report;
 
-void keyboard_add_mod(uint8_t key)
-{
-    keyboard_report.modifier |= (uint8_t) (1 << (key & 0x7));
-}
-
-void keyboard_del_mod(uint8_t key)
-{
-    keyboard_report.modifier &= (uint8_t) ~(1 << (key & 0x7));
-}
-
 void keyboard_add_key(uint8_t key)
 {
+    if (key >= 0xE0 && key <= 0xE8) {
+        keyboard_report.modifier |= (uint8_t) (1 << (key & 0x7));
+        return;
+    }
+
     int empty = -1;
     for (int i = 0; i < 6; i++) {
         if (keyboard_report.keycode[i] == key) {
@@ -428,6 +423,11 @@ void keyboard_add_key(uint8_t key)
 
 void keyboard_del_key(uint8_t key)
 {
+    if (key >= 0xE0 && key <= 0xE8) {
+        keyboard_report.modifier &= (uint8_t) ~(1 << (key & 0x7));
+        return;
+    }
+
     for (int i = 0; i < 6; i++) {
         if (keyboard_report.keycode[i] == key) {
             keyboard_report.keycode[i] = 0;
@@ -446,62 +446,35 @@ void print_report(void)
     printf("\n");
 }
 
-void make_code(uint16_t code)
+void register_code(uint16_t code, bool make)
 {
     // usage page
     uint8_t page = (uint8_t) ((code & 0xf000) >> 12);
     switch (page) {
         case 0x0:
-        case 0x7: // keyboard
+        case 0x7: // keyboard page
             {
-                uint8_t c = (uint8_t) (code & 0xFF);
-                if (c >= 0xE0 && c <= 0xE8) {
-                    keyboard_add_mod(c);
+                uint8_t key = (uint8_t) (code & 0xFF);
+                if (make) {
+                    keyboard_add_key(key);
                 } else {
-                    keyboard_add_key(c);
-                }
-                //tud_hid_n_report(0, REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
-                // params: (uint8_t report_id, void const* report, uint16_t len)
-                tud_hid_report(REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
-            }
-            break;
-        case 0xC: // consumer
-            {
-                uint16_t usage = code & 0xFFF;
-                tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
-            }
-            break;
-        case 0x1: // system
-        default:
-            break;
-    }
-    print_report();
-}
-
-void break_code(uint16_t code)
-{
-    // usage page
-    uint8_t page = (uint8_t) ((code & 0xf000) >> 12);
-    switch (page) {
-        case 0x0:
-        case 0x7: // Keyboard
-            {
-                uint8_t c = (uint8_t) (code & 0xFF);
-                if (c >= 0xE0 && c <= 0xE8) {
-                    keyboard_del_mod(c);
-                } else {
-                    keyboard_del_key(c);
+                    keyboard_del_key(key);
                 }
                 tud_hid_report(REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
             }
             break;
-        case 0xC: // Consumer
+        case 0xC: // consumer page
             {
-                uint16_t usage = 0;
+                uint16_t usage;
+                if (make) {
+                    usage = code & 0xFFF;
+                } else {
+                    usage = 0;
+                }
                 tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
             }
             break;
-        case 0x1: // System
+        case 0x1: // system page
         default:
             break;
     }
