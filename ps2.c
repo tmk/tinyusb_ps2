@@ -316,7 +316,6 @@ int8_t process_cs2(uint8_t code)
  *
  */
 void led_blinking_task(void);
-void hid_task(void);
 
 int main() {
     board_init();
@@ -460,7 +459,7 @@ void register_code(uint16_t code, bool make)
                 } else {
                     keyboard_del_key(key);
                 }
-                tud_hid_report(REPORT_ID_KEYBOARD, &keyboard_report, sizeof(keyboard_report));
+                tud_hid_n_report(ITF_NUM_KEYBOARD, 0, &keyboard_report, sizeof(keyboard_report));
             }
             break;
         case 0xC: // consumer page
@@ -471,7 +470,7 @@ void register_code(uint16_t code, bool make)
                 } else {
                     usage = 0;
                 }
-                tud_hid_report(REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
+                tud_hid_n_report(ITF_NUM_HID, REPORT_ID_CONSUMER_CONTROL, &usage, sizeof(usage));
             }
             break;
         case 0x1: // system page
@@ -489,7 +488,7 @@ void register_code(uint16_t code, bool make)
                 } else {
                     report = 0;
                 }
-                tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &report, sizeof(report));
+                tud_hid_n_report(ITF_NUM_HID, REPORT_ID_SYSTEM_CONTROL, &report, sizeof(report));
             }
             break;
         default:
@@ -520,12 +519,12 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
 {
-  (void) instance;
+  if (instance != ITF_NUM_KEYBOARD) return;
 
   if (report_type == HID_REPORT_TYPE_OUTPUT)
   {
     // Set keyboard LED e.g Capslock, Numlock etc...
-    if (report_id == REPORT_ID_KEYBOARD)
+    if (report_id == 0)
     {
       // bufsize should be (at least) 1
       if ( bufsize < 1 ) return;
