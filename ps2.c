@@ -475,6 +475,23 @@ void register_code(uint16_t code, bool make)
             }
             break;
         case 0x1: // system page
+            {
+                uint16_t usage = code & 0xFFF;
+                if (usage != HID_USAGE_DESKTOP_SYSTEM_POWER_DOWN &&
+                    usage != HID_USAGE_DESKTOP_SYSTEM_SLEEP &&
+                    usage != HID_USAGE_DESKTOP_SYSTEM_WAKE_UP) {
+                    return;
+                }
+
+                uint8_t report;
+                if (make) {
+                    report = usage & 0x3;
+                } else {
+                    report = 0;
+                }
+                tud_hid_report(REPORT_ID_SYSTEM_CONTROL, &report, sizeof(report));
+            }
+            break;
         default:
             break;
     }
