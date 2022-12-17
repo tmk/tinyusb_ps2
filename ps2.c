@@ -29,7 +29,15 @@
 
 #define PS2_ERR_NONE    0
 
-int ps2_error = PS2_ERR_NONE;
+volatile int16_t ps2_error = PS2_ERR_NONE;
+
+
+#define PS2_LED_SCROLL_LOCK 0
+#define PS2_LED_NUM_LOCK    1
+#define PS2_LED_CAPS_LOCK   2
+
+volatile int8_t ps2_led = -1;
+
 
 #define BUF_SIZE 16
 static uint8_t buf[BUF_SIZE];
@@ -40,7 +48,204 @@ static ringbuf_t rbuf = {
     .size_mask = BUF_SIZE - 1
 };
 
-void gpio_callback(uint gpio, uint32_t events) {
+#define wait_us(us)     busy_wait_us_32(us)
+#define wait_ms(ms)     busy_wait_ms(ms)
+
+void ps2_callback(uint gpio, uint32_t events);
+static void ps2_init(void)
+{
+    ringbuf_reset(&rbuf);
+    gpio_init(CLOCK_PIN);
+    gpio_init(DATA_PIN);
+    gpio_set_pulls(CLOCK_PIN, true, false);
+    gpio_set_pulls(DATA_PIN, true, false);
+    gpio_set_drive_strength(CLOCK_PIN, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_drive_strength(DATA_PIN, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_dir(DATA_PIN, GPIO_IN);
+    gpio_set_dir(CLOCK_PIN, GPIO_IN);
+    gpio_set_irq_enabled_with_callback(CLOCK_PIN, GPIO_IRQ_EDGE_FALL, true, &ps2_callback);
+}
+
+static void int_on(void)
+{
+    gpio_set_dir(CLOCK_PIN, GPIO_IN);
+    gpio_set_dir(DATA_PIN, GPIO_IN);
+    asm("nop");
+    gpio_set_irq_enabled(CLOCK_PIN, GPIO_IRQ_EDGE_FALL, true);
+}
+static void int_off(void)
+{
+    gpio_set_irq_enabled(CLOCK_PIN, GPIO_IRQ_EDGE_FALL, false);
+}
+
+static void clock_lo(void)
+{
+    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
+    asm("nop");
+    gpio_put(CLOCK_PIN, 0);
+}
+static inline void clock_hi(void)
+{
+    gpio_set_dir(CLOCK_PIN, GPIO_OUT);
+    asm("nop");
+    gpio_put(CLOCK_PIN, 1);
+}
+static bool clock_in(void)
+{
+    gpio_set_dir(CLOCK_PIN, GPIO_IN);
+    asm("nop");     // need to read pin correctly
+    return gpio_get(CLOCK_PIN);
+}
+
+static void data_lo(void)
+{
+    gpio_set_dir(DATA_PIN, GPIO_OUT);
+    asm("nop");
+    gpio_put(DATA_PIN, 0);
+}
+static void data_hi(void)
+{
+    gpio_set_dir(DATA_PIN, GPIO_OUT);
+    asm("nop");
+    gpio_put(DATA_PIN, 1);
+}
+static inline bool data_in(void)
+{
+    gpio_set_dir(DATA_PIN, GPIO_IN);
+    asm("nop");     // need to read pin correctly
+    return gpio_get(DATA_PIN);
+}
+
+static void inhibit(void)
+{
+    clock_lo();
+    data_hi();
+}
+static void idle(void)
+{
+    clock_hi();
+    data_hi();
+}
+
+static inline uint16_t wait_clock_lo(uint16_t us)
+{
+    while (clock_in()  && us) { asm(""); wait_us(1); us--; }
+    return us;
+}
+static inline uint16_t wait_clock_hi(uint16_t us)
+{
+    while (!clock_in() && us) { asm(""); wait_us(1); us--; }
+    return us;
+}
+static inline uint16_t wait_data_lo(uint16_t us)
+{
+    while (data_in() && us)  { asm(""); wait_us(1); us--; }
+    return us;
+}
+static inline uint16_t wait_data_hi(uint16_t us)
+{
+    while (!data_in() && us)  { asm(""); wait_us(1); us--; }
+    return us;
+}
+
+#define WAIT(stat, us, err) do { \
+    if (!wait_##stat(us)) { \
+        ps2_error = err; \
+        goto ERROR; \
+    } \
+} while (0)
+
+static int16_t ps2_recv(void)
+{
+    // There are alternative options for ciritcal section protection
+    //critical_section_t crit_rbuf;
+    //critical_section_init(&crit_rbuf);
+    //critical_section_enter_blocking(&crit_rbuf);      // disable IRQ and spin_lock
+    //irq_set_enabled(IO_IRQ_BANK0, false);             // disable only GPIO IRQ
+
+    uint32_t status = save_and_disable_interrupts();    // disable IRQ
+    int16_t c = ringbuf_get(&rbuf); // critical_section
+    restore_interrupts(status);
+
+    //irq_set_enabled(IO_IRQ_BANK0, true);
+    //critical_section_exit(&crit_rbuf);
+
+    return c;
+}
+
+static int16_t ps2_recv_response(void)
+{
+    // Command may take 25ms/20ms at most([5]p.46, [3]p.21)
+    uint8_t retry = 25;
+    int16_t c = -1;
+    while (retry-- && (c = ps2_recv()) == -1) {
+        wait_ms(1);
+    }
+    return c;
+}
+
+int16_t ps2_send(uint8_t data)
+{
+    bool parity = true;
+    ps2_error = PS2_ERR_NONE;
+
+    int_off();
+
+    /* terminate a transmission if we have */
+    inhibit();
+    wait_us(200);
+
+    /* 'Request to Send' and Start bit */
+    data_lo();
+    wait_us(200);
+    clock_hi();
+    WAIT(clock_lo, 15000, 1);   // 10ms [5]p.50
+
+    /* Data bit[2-9] */
+    for (uint8_t i = 0; i < 8; i++) {
+        wait_us(15);
+        if (data&(1<<i)) {
+            parity = !parity;
+            data_hi();
+        } else {
+            data_lo();
+        }
+        WAIT(clock_hi, 100, (int16_t) (2 + i*0x10));
+        WAIT(clock_lo, 100, (int16_t) (3 + i*0x10));
+    }
+
+    /* Parity bit */
+    wait_us(15);
+    if (parity) { data_hi(); } else { data_lo(); }
+    WAIT(clock_hi, 100, 4);
+    WAIT(clock_lo, 100, 5);
+
+    /* Stop bit */
+    wait_us(15);
+    data_hi();
+
+    /* Ack */
+    WAIT(data_lo, 300, 6);
+    WAIT(data_hi, 300, 7);
+    WAIT(clock_hi, 300, 8);
+
+    //clock_lo();
+    // inhibit - https://github.com/tmk/tmk_keyboard/issues/747
+    //wait_us(15);
+    clock_lo();
+    wait_us(150);
+
+    ringbuf_reset(&rbuf);   // clear buffer
+    idle();
+    int_on();
+    return ps2_recv_response();
+ERROR:
+    idle();
+    int_on();
+    return -0xf;
+}
+
+void ps2_callback(uint gpio, uint32_t events) {
     static enum {
         INIT,
         START,
@@ -55,12 +260,11 @@ void gpio_callback(uint gpio, uint32_t events) {
     if (gpio != CLOCK_PIN) { return; }
     if (events != GPIO_IRQ_EDGE_FALL) { return; }
 
-    //gpio_get(DATA_PIN)
     state++;
     switch (state) {
         case START:
             // start bit is low
-            if (gpio_get(DATA_PIN))
+            if (data_in())
                 goto ERROR;
             break;
         case BIT0:
@@ -72,13 +276,13 @@ void gpio_callback(uint gpio, uint32_t events) {
         case BIT6:
         case BIT7:
             data >>= 1;
-            if (gpio_get(DATA_PIN)) {
+            if (data_in()) {
                 data |= 0x80;
                 parity++;
             }
             break;
         case PARITY:
-            if (gpio_get(DATA_PIN)) {
+            if (data_in()) {
                 if (!(parity & 0x01))
                     goto ERROR;
             } else {
@@ -88,7 +292,7 @@ void gpio_callback(uint gpio, uint32_t events) {
             break;
         case STOP:
             // stop bit is high
-            if (!gpio_get(DATA_PIN))
+            if (!data_in())
                 goto ERROR;
             // critical section for ringbuffer - need to do nothing here
             // because this should be called in IRQ context.
@@ -101,7 +305,7 @@ void gpio_callback(uint gpio, uint32_t events) {
     }
     return;
 ERROR:
-    ps2_error = state;
+    ps2_error = state + 0xF0;
 DONE:
     state = INIT;
     data = 0;
@@ -322,25 +526,11 @@ int main() {
     tud_init(BOARD_TUD_RHPORT);
     stdio_init_all();
 
-    //critical_section_t crit_rbuf;
-    //critical_section_init(&crit_rbuf);
-
-    // input pins: clock(IRQ at falling edge)
-    gpio_init(CLOCK_PIN);
-    gpio_set_irq_enabled_with_callback(CLOCK_PIN, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
-    gpio_init(DATA_PIN);
-    gpio_set_dir(DATA_PIN, GPIO_IN);
+    ps2_init();
 
     printf("\ntinyusb_ps2\n");
     while (true) {
-        //irq_set_enabled(IO_IRQ_BANK0, false);             // disable only GPIO IRQ
-        //critical_section_enter_blocking(&crit_rbuf);      // disable IRQ and spin_lock
-        uint32_t status = save_and_disable_interrupts();    // disable IRQ
-        int c = ringbuf_get(&rbuf); // critical_section
-        restore_interrupts(status);
-        //critical_section_exit(&crit_rbuf);
-        //irq_set_enabled(IO_IRQ_BANK0, true);
-
+        int16_t c = ps2_recv();
         if (c != -1) {
             // Remote wakeup
             if (tud_suspended()) {
@@ -349,6 +539,20 @@ int main() {
 
             printf("%02X ", c);
             process_cs2((uint8_t) c);
+        }
+
+        if (ps2_led != -1) {
+            int16_t r;
+            r = ps2_send(0xED);
+            printf("sED r%02X e%02X\n", (uint16_t)r, ps2_error);
+            ps2_error = 0;
+            if (r == 0xFA) {
+                wait_us(100);
+                r = ps2_send((uint8_t)ps2_led);
+                printf("s%02X r%02X e%02X\n", ps2_led, (uint16_t)r, ps2_error);
+            }
+            ps2_error = 0;
+            ps2_led = -1;
         }
 
         tud_task();
@@ -529,9 +733,36 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
       // bufsize should be (at least) 1
       if ( bufsize < 1 ) return;
 
-      uint8_t const kbd_leds = buffer[0];
+      uint8_t const usb_led = buffer[0];
 
-      if (kbd_leds & KEYBOARD_LED_CAPSLOCK)
+      printf("LED:%02X\n", usb_led);
+
+/* keyboard LEDs */
+#define USB_LED_NUM_LOCK                0
+#define USB_LED_CAPS_LOCK               1
+#define USB_LED_SCROLL_LOCK             2
+#define USB_LED_COMPOSE                 3
+#define USB_LED_KANA                    4
+
+#define PS2_LED_SCROLL_LOCK 0
+#define PS2_LED_NUM_LOCK    1
+#define PS2_LED_CAPS_LOCK   2
+
+      ps2_led = 0;
+      if (usb_led &  (1<<USB_LED_SCROLL_LOCK))
+          ps2_led |= (1<<PS2_LED_SCROLL_LOCK);
+      if (usb_led &  (1<<USB_LED_NUM_LOCK))
+          ps2_led |= (1<<PS2_LED_NUM_LOCK);
+      if (usb_led &  (1<<USB_LED_CAPS_LOCK))
+          ps2_led |= (1<<PS2_LED_CAPS_LOCK);
+
+/*
+      if (ps2_send(0xED) == 0xFA) {
+          ps2_send(usb_led);
+      }
+*/
+
+      if (usb_led & KEYBOARD_LED_CAPSLOCK)
       {
         // Capslock On: disable blink, turn led on
         blink_interval_ms = 0;
