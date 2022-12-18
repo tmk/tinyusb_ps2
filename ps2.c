@@ -70,7 +70,6 @@ static void int_on(void)
 {
     gpio_set_dir(CLOCK_PIN, GPIO_IN);
     gpio_set_dir(DATA_PIN, GPIO_IN);
-    asm("nop");
     gpio_set_irq_enabled(CLOCK_PIN, GPIO_IRQ_EDGE_FALL, true);
 }
 static void int_off(void)
@@ -81,38 +80,34 @@ static void int_off(void)
 static void clock_lo(void)
 {
     gpio_set_dir(CLOCK_PIN, GPIO_OUT);
-    asm("nop");
     gpio_put(CLOCK_PIN, 0);
 }
 static inline void clock_hi(void)
 {
     gpio_set_dir(CLOCK_PIN, GPIO_OUT);
-    asm("nop");
     gpio_put(CLOCK_PIN, 1);
 }
 static bool clock_in(void)
 {
     gpio_set_dir(CLOCK_PIN, GPIO_IN);
-    asm("nop");     // need to read pin correctly
+    asm("nop");
     return gpio_get(CLOCK_PIN);
 }
 
 static void data_lo(void)
 {
     gpio_set_dir(DATA_PIN, GPIO_OUT);
-    asm("nop");
     gpio_put(DATA_PIN, 0);
 }
 static void data_hi(void)
 {
     gpio_set_dir(DATA_PIN, GPIO_OUT);
-    asm("nop");
     gpio_put(DATA_PIN, 1);
 }
 static inline bool data_in(void)
 {
     gpio_set_dir(DATA_PIN, GPIO_IN);
-    asm("nop");     // need to read pin correctly
+    asm("nop");
     return gpio_get(DATA_PIN);
 }
 
@@ -225,15 +220,9 @@ int16_t ps2_send(uint8_t data)
     data_hi();
 
     /* Ack */
-    WAIT(data_lo, 300, 6);
-    WAIT(data_hi, 300, 7);
-    WAIT(clock_hi, 300, 8);
-
-    //clock_lo();
-    // inhibit - https://github.com/tmk/tmk_keyboard/issues/747
-    //wait_us(15);
-    clock_lo();
-    wait_us(150);
+    WAIT(data_lo, 100, 6);    // check Ack
+    WAIT(data_hi, 100, 7);
+    WAIT(clock_hi, 100, 8);
 
     ringbuf_reset(&rbuf);   // clear buffer
     idle();
@@ -549,9 +538,12 @@ int main() {
             if (r == 0xFA) {
                 wait_us(100);
                 r = ps2_send((uint8_t)ps2_led);
+                if (r == 0xFA) {
+                    //ps2_led = -1;
+                }
                 printf("s%02X r%02X e%02X\n", ps2_led, (uint16_t)r, ps2_error);
+                ps2_error = 0;
             }
-            ps2_error = 0;
             ps2_led = -1;
         }
 
