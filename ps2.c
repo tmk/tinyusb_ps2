@@ -31,12 +31,12 @@
 
 volatile int16_t ps2_error = PS2_ERR_NONE;
 
-
 #define PS2_LED_SCROLL_LOCK 0
 #define PS2_LED_NUM_LOCK    1
 #define PS2_LED_CAPS_LOCK   2
 
 volatile int8_t ps2_led = -1;
+uint16_t ps2_kbd_id = 0xFFFF;
 
 
 #define BUF_SIZE 16
@@ -165,6 +165,8 @@ static int16_t ps2_recv(void)
     //irq_set_enabled(IO_IRQ_BANK0, true);
     //critical_section_exit(&crit_rbuf);
 
+    if (c != -1) printf("r%02X ", c & 0xFF);
+    if (ps2_error) { printf("e%02X ", ps2_error); ps2_error = 0; }
     return c;
 }
 
@@ -183,6 +185,8 @@ int16_t ps2_send(uint8_t data)
 {
     bool parity = true;
     ps2_error = PS2_ERR_NONE;
+
+    printf("s%02X ", data);
 
     int_off();
 
@@ -229,6 +233,7 @@ int16_t ps2_send(uint8_t data)
     int_on();
     return ps2_recv_response();
 ERROR:
+    printf("e%02X ", ps2_error); ps2_error = 0;
     idle();
     int_on();
     return -0xf;
@@ -359,11 +364,11 @@ int8_t process_cs2(uint8_t code)
                 case 0x84:  // Alt'd PrintScreen
                     register_code(cs2_to_hid[code], true);
                     break;
-                case 0xAA:  // Self-test passed
-                case 0xFC:  // Self-test failed
                 case 0xF1:  // Korean Hanja          - not support
                 case 0xF2:  // Korean Hangul/English - not support
                     break;
+                case 0xAA:  // Self-test passed
+                case 0xFC:  // Self-test failed
                 default:    // unknown codes
                     xprintf("!CS2_INIT!\n");
                     return -1;
@@ -476,7 +481,62 @@ int8_t process_cs2(uint8_t code)
     return 0;
 }
 
+void ps2_set_led(int8_t led)
+{
+    // keyboard is not ready
+    if (ps2_kbd_id == 0xFFFF) return;
 
+    int16_t r;
+    r = ps2_send(0xED);
+    if (r == 0xFA) {
+        wait_us(100);
+        r = ps2_send((uint8_t) led);
+    }
+    ps2_led = led;
+}
+
+void ps2_task(void)
+{
+    // keyboard init
+    if (ps2_kbd_id == 0xFFFF) {
+        int16_t r;
+        r = ps2_send(0xFF);
+        if (r != 0xFA) return;
+
+        wait_ms(500);
+        r = ps2_send(0xF2);
+        if (r != 0xFA) return;
+
+        wait_ms(500);
+        r = ps2_recv();
+        ps2_kbd_id = (uint16_t) ((r & 0xFF) << 8);
+
+        wait_ms(500);
+        r = ps2_recv();
+        ps2_kbd_id = (uint16_t) ((ps2_kbd_id & 0xFF00) | (r & 0x00FF));
+        printf("ps2_kbd_id:%04X\n",  ps2_kbd_id);
+
+        if (ps2_led != -1) {
+            ps2_set_led(ps2_led);
+        }
+    }
+
+    // keyboard is not ready
+    if (ps2_kbd_id == 0xFFFF) return;
+
+    int16_t c = ps2_recv();
+    if (c != -1) {
+        // Remote wakeup
+        if (tud_suspended()) {
+            tud_remote_wakeup();
+        }
+
+        int8_t r = process_cs2((uint8_t) c);
+        if (r == -1) {
+            ps2_kbd_id = 0xFFFF; // reinit keyboard
+        }
+    }
+}
 
 
 
@@ -519,34 +579,7 @@ int main() {
 
     printf("\ntinyusb_ps2\n");
     while (true) {
-        int16_t c = ps2_recv();
-        if (c != -1) {
-            // Remote wakeup
-            if (tud_suspended()) {
-                tud_remote_wakeup();
-            }
-
-            printf("%02X ", c);
-            process_cs2((uint8_t) c);
-        }
-
-        if (ps2_led != -1) {
-            int16_t r;
-            r = ps2_send(0xED);
-            printf("sED r%02X e%02X\n", (uint16_t)r, ps2_error);
-            ps2_error = 0;
-            if (r == 0xFA) {
-                wait_us(100);
-                r = ps2_send((uint8_t)ps2_led);
-                if (r == 0xFA) {
-                    //ps2_led = -1;
-                }
-                printf("s%02X r%02X e%02X\n", ps2_led, (uint16_t)r, ps2_error);
-                ps2_error = 0;
-            }
-            ps2_led = -1;
-        }
-
+        ps2_task();
         tud_task();
         led_blinking_task();
     }
@@ -727,32 +760,15 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 
       uint8_t const usb_led = buffer[0];
 
-      printf("LED:%02X\n", usb_led);
-
-/* keyboard LEDs */
-#define USB_LED_NUM_LOCK                0
-#define USB_LED_CAPS_LOCK               1
-#define USB_LED_SCROLL_LOCK             2
-#define USB_LED_COMPOSE                 3
-#define USB_LED_KANA                    4
-
-#define PS2_LED_SCROLL_LOCK 0
-#define PS2_LED_NUM_LOCK    1
-#define PS2_LED_CAPS_LOCK   2
-
-      ps2_led = 0;
-      if (usb_led &  (1<<USB_LED_SCROLL_LOCK))
-          ps2_led |= (1<<PS2_LED_SCROLL_LOCK);
-      if (usb_led &  (1<<USB_LED_NUM_LOCK))
-          ps2_led |= (1<<PS2_LED_NUM_LOCK);
-      if (usb_led &  (1<<USB_LED_CAPS_LOCK))
-          ps2_led |= (1<<PS2_LED_CAPS_LOCK);
-
-/*
-      if (ps2_send(0xED) == 0xFA) {
-          ps2_send(usb_led);
-      }
-*/
+      printf("LED:%02X ", usb_led);
+      int8_t led = 0;
+      if (usb_led & KEYBOARD_LED_SCROLLLOCK)
+          led |= (1 << PS2_LED_SCROLL_LOCK);
+      if (usb_led & KEYBOARD_LED_NUMLOCK)
+          led |= (1 << PS2_LED_NUM_LOCK);
+      if (usb_led & KEYBOARD_LED_CAPSLOCK)
+          led |= (1 << PS2_LED_CAPS_LOCK);
+      ps2_set_led(led);
 
       if (usb_led & KEYBOARD_LED_CAPSLOCK)
       {
