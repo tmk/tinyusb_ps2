@@ -50,6 +50,9 @@ static ringbuf_t rbuf = {
 
 #define wait_us(us)     busy_wait_us_32(us)
 #define wait_ms(ms)     busy_wait_ms(ms)
+//#define wait_us(us)     sleep_us(us)
+//#define wait_ms(ms)     sleep_ms(ms)
+#define timer_read32()  board_millis()
 
 void ps2_callback(uint gpio, uint32_t events);
 static void ps2_init(void)
@@ -483,6 +486,8 @@ int8_t process_cs2(uint8_t code)
 
 void ps2_set_led(int8_t led)
 {
+    ps2_led = led;
+
     // keyboard is not ready
     if (ps2_kbd_id == 0xFFFF) return;
 
@@ -492,13 +497,16 @@ void ps2_set_led(int8_t led)
         wait_us(100);
         r = ps2_send((uint8_t) led);
     }
-    ps2_led = led;
 }
 
 void ps2_task(void)
 {
-    // keyboard init
+    static uint32_t detect_ms = 0;
+    // keyboard detection
     if (ps2_kbd_id == 0xFFFF) {
+        if (board_millis() - detect_ms < 1000) return;
+        detect_ms = board_millis();
+
         int16_t r;
         r = ps2_send(0xFF);
         if (r != 0xFA) return;
