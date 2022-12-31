@@ -634,39 +634,82 @@ void led_blinking_task(void)
 //--------------------------------------------------------------------+
 // USB HID
 //--------------------------------------------------------------------+
-static hid_keyboard_report_t keyboard_report;
+//
+// codes from TMK >>>
+//
+#define KEYBOARD_REPORT_SIZE    8
+#define KEYBOARD_REPORT_KEYS    (KEYBOARD_REPORT_SIZE - 2)
+#define KEYBOARD_REPORT_BITS    (KEYBOARD_REPORT_SIZE - 1)
+
+typedef union {
+    uint8_t raw[KEYBOARD_REPORT_SIZE];
+    struct {
+        uint8_t mods;
+        uint8_t reserved;
+        uint8_t keys[KEYBOARD_REPORT_KEYS];
+    };
+//#if defined(NKRO_ENABLE) || defined(NKRO_6KRO_ENABLE)
+    struct {
+        uint8_t mods;
+        uint8_t bits[KEYBOARD_REPORT_BITS];
+    } nkro;
+//#endif
+} __attribute__ ((packed)) report_keyboard_t;
+//
+// codes from TMK <<<
+//
+
+static report_keyboard_t keyboard_report;
 
 void keyboard_add_key(uint8_t key)
 {
     if (key >= 0xE0 && key <= 0xE8) {
-        keyboard_report.modifier |= (uint8_t) (1 << (key & 0x7));
+        keyboard_report.mods |= (uint8_t) (1 << (key & 0x7));
         return;
     }
 
+    // NKRO
+    if (tud_hid_n_get_protocol(ITF_NUM_KEYBOARD) == HID_PROTOCOL_REPORT) {
+        if ((key >> 3) < KEYBOARD_REPORT_BITS) {
+            keyboard_report.nkro.bits[key >> 3] |= (uint8_t) (1 << (key  & 0x7));
+        }
+        return;
+    }
+
+    // 6KRO
     int empty = -1;
     for (int i = 0; i < 6; i++) {
-        if (keyboard_report.keycode[i] == key) {
+        if (keyboard_report.keys[i] == key) {
             return;
         }
-        if (empty == -1 && keyboard_report.keycode[i] == 0) {
+        if (empty == -1 && keyboard_report.keys[i] == 0) {
             empty = i;
         }
     }
     if (empty != -1) {
-        keyboard_report.keycode[empty] = key;
+        keyboard_report.keys[empty] = key;
     }
 }
 
 void keyboard_del_key(uint8_t key)
 {
     if (key >= 0xE0 && key <= 0xE8) {
-        keyboard_report.modifier &= (uint8_t) ~(1 << (key & 0x7));
+        keyboard_report.mods &= (uint8_t) ~(1 << (key & 0x7));
         return;
     }
 
+    // NKRO
+    if (tud_hid_n_get_protocol(ITF_NUM_KEYBOARD) == HID_PROTOCOL_REPORT) {
+        if ((key >> 3) < KEYBOARD_REPORT_BITS) {
+            keyboard_report.nkro.bits[key >> 3] &= (uint8_t) ~(1<<(key & 0x7));
+        }
+        return;
+    }
+
+    // 6KRO
     for (int i = 0; i < 6; i++) {
-        if (keyboard_report.keycode[i] == key) {
-            keyboard_report.keycode[i] = 0;
+        if (keyboard_report.keys[i] == key) {
+            keyboard_report.keys[i] = 0;
             return;
         }
     }
@@ -696,7 +739,11 @@ void register_code(uint16_t code, bool make)
                 } else {
                     keyboard_del_key(key);
                 }
-                tud_hid_n_report(ITF_NUM_KEYBOARD, 0, &keyboard_report, sizeof(keyboard_report));
+                if (tud_hid_n_get_protocol(ITF_NUM_KEYBOARD) == HID_PROTOCOL_BOOT) {
+                    tud_hid_n_report(ITF_NUM_KEYBOARD, 0, &keyboard_report, 8);
+                } else { // NKRO
+                    tud_hid_n_report(ITF_NUM_KEYBOARD, 0, &keyboard_report, sizeof(keyboard_report));
+                }
             }
             break;
         case 0xC: // consumer page
