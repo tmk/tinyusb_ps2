@@ -637,10 +637,6 @@ void led_blinking_task(void)
 //
 // codes from TMK >>>
 //
-#define KEYBOARD_REPORT_SIZE    8
-#define KEYBOARD_REPORT_KEYS    (KEYBOARD_REPORT_SIZE - 2)
-#define KEYBOARD_REPORT_BITS    (KEYBOARD_REPORT_SIZE - 1)
-
 typedef union {
     uint8_t raw[KEYBOARD_REPORT_SIZE];
     struct {

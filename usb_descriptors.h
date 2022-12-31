@@ -43,4 +43,9 @@ enum
   REPORT_ID_COUNT
 };
 
+// 20-byte NKRO: support keycodes upto LANG8(0x97)
+#define KEYBOARD_REPORT_SIZE    20
+#define KEYBOARD_REPORT_KEYS    (KEYBOARD_REPORT_SIZE - 2)
+#define KEYBOARD_REPORT_BITS    (KEYBOARD_REPORT_SIZE - 1)
+
 #endif /* USB_DESCRIPTORS_H_ */

@@ -1,4 +1,4 @@
-/* 
+/*
  * The MIT License (MIT)
  *
  * Copyright (c) 2019 Ha Thach (tinyusb.org)
@@ -76,14 +76,48 @@ uint8_t const * tud_descriptor_device_cb(void)
 
 uint8_t const desc_hid_keyboard_report[] =
 {
-  TUD_HID_REPORT_DESC_KEYBOARD()
+  // NKRO Keyboard
+  HID_USAGE_PAGE ( HID_USAGE_PAGE_DESKTOP     )                    ,
+  HID_USAGE      ( HID_USAGE_DESKTOP_KEYBOARD )                    ,
+  HID_COLLECTION ( HID_COLLECTION_APPLICATION )                    ,
+    // Modifiers
+    HID_USAGE_PAGE ( HID_USAGE_PAGE_KEYBOARD )                     ,
+      HID_USAGE_MIN    ( 0xE0                                   )  ,
+      HID_USAGE_MAX    ( 0xE7                                   )  ,
+      HID_LOGICAL_MIN  ( 0                                      )  ,
+      HID_LOGICAL_MAX  ( 1                                      )  ,
+      HID_REPORT_COUNT ( 8                                      )  ,
+      HID_REPORT_SIZE  ( 1                                      )  ,
+      HID_INPUT        ( HID_DATA | HID_VARIABLE | HID_ABSOLUTE )  ,
+
+    // LED Indicator
+    HID_USAGE_PAGE ( HID_USAGE_PAGE_LED )                          ,
+      HID_USAGE_MIN    ( 1                                       ) ,
+      HID_USAGE_MAX    ( 5                                       ) ,
+      HID_REPORT_COUNT ( 5                                       ) ,
+      HID_REPORT_SIZE  ( 1                                       ) ,
+      HID_OUTPUT       ( HID_DATA | HID_VARIABLE | HID_ABSOLUTE  ) ,
+      HID_REPORT_COUNT ( 1                                       ) ,
+      HID_REPORT_SIZE  ( 3                                       ) ,
+      HID_OUTPUT       ( HID_CONSTANT                            ) ,
+
+    // Keys
+    HID_USAGE_PAGE ( HID_USAGE_PAGE_KEYBOARD )                     ,
+      HID_USAGE_MIN    ( 0                                      )  ,
+      HID_USAGE_MAX    ( (KEYBOARD_REPORT_BITS * 8 - 1)         )  ,
+      HID_LOGICAL_MIN  ( 0                                      )  ,
+      HID_LOGICAL_MAX  ( 1                                      )  ,
+      HID_REPORT_COUNT ( (KEYBOARD_REPORT_BITS * 8)             )  ,
+      HID_REPORT_SIZE  ( 1                                      )  ,
+      HID_INPUT        ( HID_DATA | HID_VARIABLE | HID_ABSOLUTE )  ,
+  HID_COLLECTION_END
 };
 
 uint8_t const desc_hid_report[] =
 {
-  TUD_HID_REPORT_DESC_MOUSE         ( HID_REPORT_ID(REPORT_ID_MOUSE            )),
-  TUD_HID_REPORT_DESC_CONSUMER      ( HID_REPORT_ID(REPORT_ID_CONSUMER_CONTROL )),
-  TUD_HID_REPORT_DESC_SYSTEM_CONTROL(HID_REPORT_ID(REPORT_ID_SYSTEM_CONTROL))
+  TUD_HID_REPORT_DESC_MOUSE         ( HID_REPORT_ID( REPORT_ID_MOUSE            )),
+  TUD_HID_REPORT_DESC_CONSUMER      ( HID_REPORT_ID( REPORT_ID_CONSUMER_CONTROL )),
+  TUD_HID_REPORT_DESC_SYSTEM_CONTROL( HID_REPORT_ID( REPORT_ID_SYSTEM_CONTROL   ))
 };
 
 // Invoked when received GET HID REPORT DESCRIPTOR
@@ -106,8 +140,6 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
 #define EPNUM_CDC_DATA_OUT  0x04
 #define EPNUM_CDC_DATA_IN   0x84
 
-#define KEYBOARD_EP_BUFSIZE 8
-
 #define  CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
 
 uint8_t const desc_configuration[] =
@@ -116,7 +148,7 @@ uint8_t const desc_configuration[] =
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 
   // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
-  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, KEYBOARD_EP_BUFSIZE, 10),
+  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, KEYBOARD_REPORT_SIZE, 1),
 
   TUD_HID_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 5),
 
